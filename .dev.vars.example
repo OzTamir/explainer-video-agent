@@ -1,0 +1,40 @@
+# Copy to .dev.vars for `npm run dev`. Deployed Workers get these through
+# `wrangler secret put <NAME>` (see docs/setup.md). Never commit .dev.vars.
+
+# Model provider (the agent uses Claude through Flue's built-in Anthropic provider).
+ANTHROPIC_API_KEY=""
+
+# --- GitHub App ---------------------------------------------------------------
+# github.com → Settings → Developer settings → GitHub Apps; see docs/setup.md.
+
+# App ID from the App's settings page (non-secret; production value in wrangler.jsonc).
+GITHUB_APP_ID=""
+# The App's private key, PEM as downloaded (PKCS#1 or PKCS#8). Multi-line: keep the quotes,
+# or paste it with literal \n in place of newlines; both are accepted.
+GITHUB_APP_PRIVATE_KEY=""
+# The App's webhook secret (App settings → Webhook → Secret).
+GITHUB_WEBHOOK_SECRET=""
+# Optional: comma-separated "owner/repo" allowlist. Unset = every repo the App is installed on.
+GITHUB_ALLOWED_REPOS=""
+
+# --- ElevenLabs ---------------------------------------------------------------
+# elevenlabs.io → Developers → API keys. Needs text-to-speech only.
+ELEVENLABS_API_KEY=""
+# Voice and model for the narration (non-secret; production values in wrangler.jsonc).
+ELEVENLABS_VOICE_ID="nPczCjzI2devNBz1zQrb"
+ELEVENLABS_MODEL_ID="eleven_multilingual_v2"
+
+# --- Video links --------------------------------------------------------------
+# Signs the video links the agent posts (any long random string: `openssl rand -hex 32`).
+# A link is valid only with its signature; rotating this value invalidates every posted link.
+VIDEO_URL_SECRET=""
+# This Worker's public origin, used in those links (non-secret; production value in wrangler.jsonc).
+PUBLIC_BASE_URL="http://localhost:5173"
+
+# --- Operator access ----------------------------------------------------------
+# Bearer token for the /agents/* mount in src/app.ts (any long random string). Lets you
+# trigger a run by hand and read a pull request's conversation history.
+OPERATOR_TOKEN=""
+
+# Sandbox SDK transport (non-secret; production value in wrangler.jsonc).
+SANDBOX_TRANSPORT="rpc"
