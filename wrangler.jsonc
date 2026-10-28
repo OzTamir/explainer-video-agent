@@ -1,0 +1,51 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "explainer-video-agent",
+	"compatibility_date": "2026-06-01",
+	"compatibility_flags": ["nodejs_compat"],
+	// The Worker is served at its workers.dev URL by default. To use your own
+	// hostname instead, set "workers_dev": false and add
+	//   "routes": [{ "pattern": "agent.example.com", "custom_domain": true }]
+	// then point PUBLIC_BASE_URL below at it.
+	"workers_dev": true,
+	// Workers Traces shows each agent response as a trace with agent-level
+	// spans: https://flueframework.com/docs/guide/observability/#cloudflare
+	"observability": { "traces": { "enabled": true } },
+	// Non-secret configuration. Secrets (API keys, the GitHub App key) are set with
+	// `wrangler secret put` — see docs/setup.md. Local dev reads .dev.vars.
+	"vars": {
+		// The GitHub App id (its private key and webhook secret are secrets).
+		"GITHUB_APP_ID": "",
+		// This Worker's public origin, used to build the signed video links.
+		// Example: "https://explainer-video-agent.<your-subdomain>.workers.dev"
+		"PUBLIC_BASE_URL": "",
+		// ElevenLabs voice and model for the narration (defaults in src/integrations/elevenlabs.ts).
+		"ELEVENLABS_VOICE_ID": "nPczCjzI2devNBz1zQrb",
+		"ELEVENLABS_MODEL_ID": "eleven_multilingual_v2",
+		// Sandbox SDK: multiplex every container call over one connection so a long
+		// build does not spend the Worker's subrequest budget one file at a time.
+		"SANDBOX_TRANSPORT": "rpc"
+	},
+	// The agent renders inside a container (HyperFrames CLI, Chromium, FFmpeg; see
+	// Dockerfile). One container per pull request being explained; the instance type
+	// is the render-speed knob (Chromium at 1080p needs the memory of standard-3).
+	"containers": [
+		{
+			"class_name": "Sandbox",
+			"image": "./Dockerfile",
+			"instance_type": "standard-3",
+			"max_instances": 2
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "Sandbox", "class_name": "Sandbox" }]
+	},
+	// Rendered explainer videos. Private; the Worker serves them under signed URLs
+	// (src/integrations/explainer-store.ts). A lifecycle rule expires objects after 7 days.
+	"r2_buckets": [{ "binding": "EXPLAINER_VIDEOS", "bucket_name": "explainer-videos" }],
+	// Every agent generates a Durable Object class named after its identity
+	// (PrExplainer -> FluePrExplainerAgent), and Cloudflare requires a migration
+	// entry for each one. Append a new tag when you add an agent:
+	// https://flueframework.com/docs/guide/cloudflare-target/#managing-migrations
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["FluePrExplainerAgent", "Sandbox"] }]
+}
