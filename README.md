@@ -11,7 +11,7 @@ a 1080p mp4, and posts it back on the pull request. Nothing runs longer than a m
 is stored privately and linked with a signed URL that exists only in that comment, for seven days
 or until the pull request closes.
 
-# Architecture
+## Architecture
 
 PrExplainer agent is one [Flue](https://flueframework.com) agent deployed as a single Cloudflare Worker, with a
 Cloudflare Sandbox container for the render and an R2 bucket for the output. It runs as a GitHub
