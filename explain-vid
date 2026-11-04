@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# ./explain-vid — render a narrated explainer video for a pull request, locally.
+#
+# The GitHub-App-free variant of the Worker: reads the PR with your `gh` login,
+# runs the agent on this machine (cli/pr-explainer-local.ts via `flue run`) and
+# writes the video to out/<owner>/<repo>/pr-<n>/explainer.mp4. See docs/cli.md.
+set -euo pipefail
+
+usage() {
+	cat <<'EOF'
+Usage: ./explain-vid [options] <pr>
+
+  <pr>               https://github.com/<owner>/<repo>/pull/<n>  or  <owner>/<repo>#<n>
+
+Options:
+  -n, --note <text>  Steer the video: a focus area, a length, an audience.
+  -c, --comment      Post the summary as a comment on the PR with `gh pr comment`
+                     (GitHub's API cannot attach video; drop the mp4 into the comment yourself).
+  -h, --help         Show this help.
+
+Needs: gh (logged in), Node >= 22.19, ffmpeg/ffprobe, `npm install` done, and
+ANTHROPIC_API_KEY + ELEVENLABS_API_KEY in the shell, .env or .dev.vars.
+EOF
+}
+
+die() { printf 'explain-vid: %s\n' "$*" >&2; exit 1; }
+
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
+note="" comment=0 target=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		-n|--note) [[ $# -ge 2 ]] || die "--note needs a value"; note="$2"; shift 2 ;;
+		-c|--comment) comment=1; shift ;;
+		-h|--help) usage; exit 0 ;;
+		-*) usage >&2; die "unknown option: $1" ;;
+		*) [[ -z "$target" ]] || die "one pull request at a time"; target="$1"; shift ;;
+	esac
+done
+[[ -n "$target" ]] || { usage >&2; exit 1; }
+
+# --- Parse the pull request ---------------------------------------------------
+if [[ "$target" =~ ^https?://github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
+	owner="${BASH_REMATCH[1]}" repo="${BASH_REMATCH[2]}" number="${BASH_REMATCH[3]}"
+elif [[ "$target" =~ ^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#([0-9]+)$ ]]; then
+	owner="${BASH_REMATCH[1]}" repo="${BASH_REMATCH[2]}" number="${BASH_REMATCH[3]}"
+else
+	die "not a pull request link: $target"
+fi
+
+# --- Preflight ----------------------------------------------------------------
+for bin in gh node ffmpeg ffprobe; do
+	command -v "$bin" >/dev/null || die "$bin is not installed"
+done
+[[ -x "$ROOT/node_modules/.bin/flue" && -x "$ROOT/node_modules/.bin/hyperframes" ]] \
+	|| die "dependencies missing; run: (cd \"$ROOT\" && npm install)"
+gh auth status >/dev/null 2>&1 || die "gh is not logged in; run: gh auth login"
+
+# Keys: the shell wins, then .env (flue run loads it on its own), then .dev.vars.
+env_args=()
+if [[ ! -f "$ROOT/.env" && -f "$ROOT/.dev.vars" ]]; then env_args=(--env "$ROOT/.dev.vars"); fi
+has_key() {
+	[[ -n "${!1:-}" ]] && return 0
+	local f
+	for f in "$ROOT/.env" "$ROOT/.dev.vars"; do
+		[[ -f "$f" ]] && grep -Eq "^[[:space:]]*(export[[:space:]]+)?$1=[\"']?[^\"'[:space:]]" "$f" && return 0
+	done
+	return 1
+}
+for key in ANTHROPIC_API_KEY ELEVENLABS_API_KEY; do
+	has_key "$key" || die "$key is not set (shell, .env or .dev.vars)"
+done
+
+# Who opened it and what it is called; also proves `gh` can read the PR.
+pr_json="$(gh pr view "$number" --repo "$owner/$repo" --json title,author)" \
+	|| die "cannot read $owner/$repo#$number with gh"
+
+# --- Workspace ----------------------------------------------------------------
+workspace="$ROOT/out/$owner/$repo/pr-$number"
+mkdir -p "$workspace/.agents/skills" "$workspace/.gh-logged-out"
+rm -f "$workspace/explainer.mp4" "$workspace/poster.jpg" "$workspace/comment.md" "$workspace/summary.json"
+# The HyperFrames skills matching the pinned CLI, where Flue discovers workspace skills.
+for skill in hyperframes hyperframes-cli media-use; do
+	rm -rf "$workspace/.agents/skills/$skill"
+	cp -R "$ROOT/node_modules/hyperframes/dist/skills/$skill" "$workspace/.agents/skills/"
+done
+
+export PATH="$ROOT/node_modules/.bin:$PATH"
+export HYPERFRAMES_NO_TELEMETRY=1 HYPERFRAMES_NO_UPDATE_CHECK=1 HYPERFRAMES_SKIP_SKILLS=1
+hyperframes browser ensure >/dev/null || die "hyperframes could not find or download Chrome"
+
+data="$(node -e '
+	const [owner, repo, number, workspace, pr] = process.argv.slice(1);
+	const { title, author } = JSON.parse(pr);
+	console.log(JSON.stringify({ owner, repo, number: Number(number), title, openedBy: author?.login ?? "unknown", workspace }));
+' "$owner" "$repo" "$number" "$workspace" "$pr_json")"
+
+message="Explain this pull request."
+[[ -z "$note" ]] || message="Explain this pull request. Note from the requester: $note"
+
+# --- Run ----------------------------------------------------------------------
+printf 'explain-vid: %s/%s#%s → %s\n' "$owner" "$repo" "$number" "$workspace" >&2
+cd "$ROOT"
+flue run cli/pr-explainer-local.ts \
+	--id "explain-vid-$owner-$repo-$number-$(date +%Y%m%d%H%M%S)" --new \
+	--data "$data" --message "$message" ${env_args[@]+"${env_args[@]}"} \
+	|| die "the agent did not finish; the log is above, the work so far in $workspace"
+
+[[ -f "$workspace/explainer.mp4" && -f "$workspace/comment.md" ]] \
+	|| die "the agent stopped without a video; see its reply above"
+
+printf '\nVideo:  %s\n' "$workspace/explainer.mp4"
+[[ -f "$workspace/poster.jpg" ]] && printf 'Poster: %s\n' "$workspace/poster.jpg"
+
+if [[ $comment -eq 1 ]]; then
+	url="$(gh pr comment "$number" --repo "$owner/$repo" --body-file "$workspace/comment.md")"
+	printf 'Comment: %s\n' "$url"
+	printf '  To attach the video, edit that comment and drop explainer.mp4 into it.\n'
+fi

@@ -103,6 +103,35 @@ These are instructions, not enforcement. Treat them as best-effort.
 - Installing the App on a public repository means any collaborator with write access can spend
   your ElevenLabs and Anthropic budget with one comment. Use `GITHUB_ALLOWED_REPOS`.
 
+## Local CLI (`./explain-vid`)
+
+`./explain-vid` (see [cli.md](cli.md)) runs a second agent, `cli/pr-explainer-local.ts`, on the
+machine of whoever runs it. It has no inbound route and no GitHub App. Its boundaries differ from
+the Worker's, and they are weaker:
+
+- **The model's shell is the host.** Flue's `local()` sandbox runs commands as your user, in
+  `out/<owner>/<repo>/pr-<n>/`. The instructions confine the model to that directory and tell it
+  not to use git, gh or the network, but nothing enforces that. A hostile diff that hijacks the
+  model can read or change anything your user can, including other repositories, SSH keys and
+  cloud credentials on disk. Run it only on pull requests whose authors you trust, or inside a VM
+  or devcontainer.
+- **Credentials.** `ANTHROPIC_API_KEY` and `ELEVENLABS_API_KEY` are read by the agent process from
+  the shell, `.env` or `.dev.vars`. `local()` does not pass them to the model's shell (it forwards
+  only `PATH`, `HOME` and similar shell essentials). GitHub is read through `gh api` in the agent
+  process, as your `gh` login. The model's shell gets `GH_CONFIG_DIR` pointed at an empty
+  directory, so a plain `gh` call there is logged out. That keeps the model from reaching for
+  `gh` by accident. It is not a boundary, because the shell can read your real gh config.
+- **What the tools can do.** They read the one pull request in the conversation's creation data,
+  call ElevenLabs, render into the workspace and write `comment.md`/`summary.json` there. No tool
+  posts to GitHub. Posting happens only with `--comment`: the wrapper script runs
+  `gh pr comment` on the pull request named on its command line, after the run produced a
+  video, and the comment body is rendered by code from the model's summary.
+- **Data at rest.** The diff the model read, the script, the narration and the video stay in
+  `out/` (gitignored). Conversation history stays in `node_modules/.cache/flue/run.db`. Neither
+  expires. Delete them when you are done.
+- **Cost.** Narrations are capped at three per run and the length limits match the Worker's. There
+  is no cap across runs.
+
 ## Known gaps
 
 1. Container egress is open. Restricting it to nothing (the image carries everything a render

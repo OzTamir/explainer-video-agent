@@ -6,8 +6,9 @@
 # where Flue discovers workspace skills (/workspace/.agents/skills). The agent
 # never installs anything at run time.
 #
-# Keep the two pins in step: HYPERFRAMES_VERSION with the skills the agent was
-# written against, and the sandbox image tag with the @cloudflare/sandbox
+# Keep the pins in step: HYPERFRAMES_VERSION with the skills the agent was
+# written against and with the hyperframes devDependency (./explain-vid), and the
+# sandbox image tag with the @cloudflare/sandbox
 # package version in package.json.
 
 FROM node:22-bookworm-slim

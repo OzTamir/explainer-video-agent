@@ -17,6 +17,7 @@
 		"noEmit": true
 	},
 	"include": [
-		"src"
+		"src",
+		"cli"
 	]
 }

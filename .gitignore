@@ -6,3 +6,6 @@ dist/
 !.dev.vars.example
 .flue-vite/
 .flue-vite.wrangler.jsonc
+
+# ./explain-vid workspaces and videos
+out/
