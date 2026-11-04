@@ -11,13 +11,17 @@ TypeScript the agent imports.
 
 ```
 src/agents/pr-explainer.ts   the agent: instructions, tools, limits
+src/explainer/core.ts        steps, budgets, narration and render shared by both agents (no cloudflare:*)
 src/channels/github.ts       verified inbound webhook (GitHub App); dispatches runs, cleans up on close
 src/integrations/            fetch-based clients: github.ts, elevenlabs.ts, explainer-store.ts, env.ts
 src/app.ts                   HTTP route map — every route is mounted here, explicitly
 src/cloudflare.ts            exports the Sandbox container class
 Dockerfile                   the render container (HyperFrames CLI, Chromium, FFmpeg)
 wrangler.jsonc               Worker config: vars, container, bucket, migrations
-docs/                        how-it-works, setup, configuration, local-development, operations, security
+cli/pr-explainer-local.ts    the local agent behind ./explain-vid (flue run, local() sandbox, gh)
+cli/gh.ts                    read-only PR access through `gh api` (Node-only)
+explain-vid                  the local entry point: ./explain-vid <pr-link>
+docs/                        cli, how-it-works, setup, configuration, local-development, operations, security
 ```
 
 ## Conventions
@@ -27,7 +31,8 @@ docs/                        how-it-works, setup, configuration, local-developme
 - **Bind destinations in code.** The model chooses arguments, never the repository, the bucket key
   or a credential. Tool outputs must be JSON (use `type`, not `interface`).
 - **No Node-only APIs, no child processes** in the Worker; it runs in workerd. Shell work happens
-  in the container through the sandbox.
+  in the container through the sandbox. Node-only code lives in `cli/`, which Flue does not scan,
+  and is never imported from `src/`.
 - **Secrets** come from the environment only. Never commit, print or invent one. New variables go
   in `.dev.vars.example` (with a comment on where to get them) and, for non-secrets, `wrangler.jsonc`.
 - **Fail lazily.** Cloudflare evaluates the module at upload, before secrets exist; nothing may

@@ -25,6 +25,20 @@ App: the App's webhook triggers it, and its comments are posted as the App.
 Only owners, members and collaborators of the repository can trigger a render; everyone else is
 ignored.
 
+### Without the App: `./explain-vid`
+
+The same agent also runs locally. It reads the pull request with your `gh` login and writes the
+video to `out/`. You don't need an App, a Worker or a bucket.
+
+```sh
+npm install
+export ANTHROPIC_API_KEY=… ELEVENLABS_API_KEY=…     # or put them in .env / .dev.vars
+./explain-vid https://github.com/<owner>/<repo>/pull/<n> [--note "…"] [--comment]
+```
+
+The model's shell runs on your machine as you, so use it on pull requests you trust. See
+[docs/cli.md](docs/cli.md).
+
 ## Setup
 
 You need a Cloudflare account on the Workers Paid plan (containers), an Anthropic API key, an
@@ -52,6 +66,7 @@ Then, in order (each step is spelled out in [docs/setup.md](docs/setup.md)):
 | [docs/how-it-works.md](docs/how-it-works.md) | The trigger, the stages of a run, the tools the model has, length limits, where things run, output and retention. |
 | [docs/setup.md](docs/setup.md) | Step-by-step setup: bucket, GitHub App, ElevenLabs, secrets, first deploy, continuous deployment. |
 | [docs/configuration.md](docs/configuration.md) | Every variable and binding, the cost knobs, and how to change the agent's behavior. |
+| [docs/cli.md](docs/cli.md) | `./explain-vid`: the local, `gh`-based variant, its requirements, output and differences from the App. |
 | [docs/local-development.md](docs/local-development.md) | The dev server, running a render by hand, tunnels for the webhook, reading a run back. |
 | [docs/operations.md](docs/operations.md) | Deploying, verifying, rolling back, updating the render image, troubleshooting. |
 | [docs/security.md](docs/security.md) | What data flows where, what is enforced by code, what depends on the model, known gaps. |
