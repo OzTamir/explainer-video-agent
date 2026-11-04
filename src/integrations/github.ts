@@ -62,24 +62,9 @@ export class GitHubClient {
 	}
 
 	async getPullRequest(ref: PullRequestRef): Promise<PullRequest> {
-		const pr = await this.#json<RawPullRequest>(`/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}`);
-		return {
-			number: pr.number,
-			title: pr.title,
-			body: pr.body ?? '',
-			author: pr.user?.login ?? 'unknown',
-			state: pr.state,
-			draft: Boolean(pr.draft),
-			merged: Boolean(pr.merged),
-			baseRef: pr.base.ref,
-			headRef: pr.head.ref,
-			headSha: pr.head.sha,
-			additions: pr.additions,
-			deletions: pr.deletions,
-			changedFiles: pr.changed_files,
-			commits: pr.commits,
-			url: pr.html_url,
-		};
+		return toPullRequest(
+			await this.#json<RawPullRequest>(`/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}`),
+		);
 	}
 
 	/** Every changed file with its patch. GitHub pages at 100 files; walks every page (capped at 10). */
@@ -89,15 +74,7 @@ export class GitHubClient {
 			const batch = await this.#json<RawFile[]>(
 				`/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}/files?per_page=100&page=${page}`,
 			);
-			for (const f of batch) {
-				files.push({
-					filename: f.filename,
-					status: f.status,
-					additions: f.additions,
-					deletions: f.deletions,
-					...(f.patch ? { patch: f.patch } : {}),
-				});
-			}
+			files.push(...batch.map(toFile));
 			if (batch.length < 100) break;
 		}
 		return files;
@@ -109,14 +86,7 @@ export class GitHubClient {
 			const batch = await this.#json<RawCommit[]>(
 				`/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}/commits?per_page=100&page=${page}`,
 			);
-			for (const c of batch) {
-				commits.push({
-					sha: c.sha,
-					subject: (c.commit.message ?? '').split('\n')[0] ?? '',
-					authorLogin: c.author?.login ?? null,
-					authorName: c.commit.author?.name ?? null,
-				});
-			}
+			commits.push(...batch.map(toCommit));
 			if (batch.length < 100) break;
 		}
 		return commits;
@@ -288,7 +258,51 @@ function base64url(bytes: Uint8Array): string {
 	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-type RawPullRequest = {
+// ---------------------------------------------------------------------------
+// REST payloads and their mapping. Exported for the local `gh`-backed client
+// (cli/gh.ts), which reads the same endpoints through `gh api`.
+// ---------------------------------------------------------------------------
+
+export function toPullRequest(pr: RawPullRequest): PullRequest {
+	return {
+		number: pr.number,
+		title: pr.title,
+		body: pr.body ?? '',
+		author: pr.user?.login ?? 'unknown',
+		state: pr.state,
+		draft: Boolean(pr.draft),
+		merged: Boolean(pr.merged),
+		baseRef: pr.base.ref,
+		headRef: pr.head.ref,
+		headSha: pr.head.sha,
+		additions: pr.additions,
+		deletions: pr.deletions,
+		changedFiles: pr.changed_files,
+		commits: pr.commits,
+		url: pr.html_url,
+	};
+}
+
+export function toFile(f: RawFile): PullRequestFile {
+	return {
+		filename: f.filename,
+		status: f.status,
+		additions: f.additions,
+		deletions: f.deletions,
+		...(f.patch ? { patch: f.patch } : {}),
+	};
+}
+
+export function toCommit(c: RawCommit): PullRequestCommit {
+	return {
+		sha: c.sha,
+		subject: (c.commit.message ?? '').split('\n')[0] ?? '',
+		authorLogin: c.author?.login ?? null,
+		authorName: c.commit.author?.name ?? null,
+	};
+}
+
+export type RawPullRequest = {
 	number: number;
 	title: string;
 	body: string | null;
@@ -305,9 +319,9 @@ type RawPullRequest = {
 	html_url: string;
 };
 
-type RawFile = { filename: string; status: string; additions: number; deletions: number; patch?: string };
+export type RawFile = { filename: string; status: string; additions: number; deletions: number; patch?: string };
 
-type RawCommit = {
+export type RawCommit = {
 	sha: string;
 	commit: { message?: string; author?: { name?: string } | null };
 	author: { login: string } | null;
