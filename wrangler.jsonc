@@ -11,11 +11,18 @@
 	// Workers Traces shows each agent response as a trace with agent-level
 	// spans: https://flueframework.com/docs/guide/observability/#cloudflare
 	"observability": { "traces": { "enabled": true } },
-	// Non-secret configuration. Secrets (API keys, the GitHub App key) are set with
+	// Non-secret configuration. Secrets (API keys, the GitHub App key, the GitLab token) are set with
 	// `wrangler secret put` — see docs/setup.md. Local dev reads .dev.vars.
 	"vars": {
 		// The GitHub App id (its private key and webhook secret are secrets).
+		// Leave empty when only GitLab is used.
 		"GITHUB_APP_ID": "",
+		// The GitLab instance (the group access token and webhook secret are secrets).
+		// Change it for a self-managed instance; see docs/gitlab.md.
+		"GITLAB_BASE_URL": "https://gitlab.com",
+		// Optional allowlist of project or group paths, comma-separated. Empty means
+		// every project the group webhook covers.
+		"GITLAB_ALLOWED_PROJECTS": "",
 		// This Worker's public origin, used to build the signed video links.
 		// Example: "https://explainer-video-agent.<your-subdomain>.workers.dev"
 		"PUBLIC_BASE_URL": "",

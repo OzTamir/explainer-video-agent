@@ -21,6 +21,24 @@ dispatches a run for an `issue_comment` delivery that is all of:
 Anything else gets an empty `200` and nothing happens. A matching comment gets an 👀 reaction at
 once, then a progress comment from the agent within a minute or two (the container has to start).
 
+### GitLab
+
+A GitLab group webhook (`POST /channels/gitlab/webhook`, handled in `src/channels/gitlab.ts`, with
+the parsing in `src/channels/gitlab-events.ts`) dispatches a run for a `Note Hook` delivery that
+is all of:
+
+| Check | Where |
+|---|---|
+| the `X-Gitlab-Token` header equals `GITLAB_WEBHOOK_SECRET` | channel handler, constant-time |
+| the note is on a merge request, is new (not an edit) and is not a system note | payload parser |
+| the body is `/explain-vid`, alone or followed by a note | payload parser (same code as GitHub) |
+| the project is covered by `GITLAB_ALLOWED_PROJECTS`, when that var is set | channel handler |
+| the author is not the token's own bot user | channel handler, `GET /user` (cached) |
+| the author has the Developer role or higher on the project, inherited roles included | channel handler, `GET /projects/:id/members/all/:user_id` |
+
+Everything else gets a `200` with a one-line reason. A `Merge Request Hook` delivery with the
+action `close` or `merge` starts the cleanup described under [Output and retention](#output-and-retention).
+
 `/explain-video` or `/explain-vids` is not the command; only `/explain-vid` alone or followed by
 whitespace matches.
 
@@ -29,6 +47,10 @@ thirty seconds", "for the support team"); without one the video explains the cha
 who has not read the diff.
 
 ## One conversation per pull request
+
+On GitLab the conversation id is `gitlab:v1:<project id>:<merge request iid>` and the run key is
+`note-<note id>`: one comment is one run, however often GitLab retries the delivery. The rest of
+this section describes GitHub.
 
 The conversation id is `github:v1:<owner>:<repo>:<number>` (derived by `@flue/github`). Every
 `/explain-vid` on the same pull request lands in the same conversation, so a second request can
@@ -59,13 +81,18 @@ content and chooses arguments, never a repository, a bucket key or a credential.
 
 | Tool | Does | Refuses |
 |---|---|---|
-| `pull_request` | Reads the pull request, its files and commits as the App installation. | — (read-only) |
+| `pull_request` | Reads the pull request, its files and commits as the App installation (on GitLab: the merge request, its diffs and commits with the group token). | — (read-only) |
 | `pull_request_patches` | Returns unified-diff hunks for up to 12 named files, each cut at a character limit. | More than 12 files; files not in the pull request are listed back as missing. |
 | `set_status` | Creates the run's progress comment on first call, edits it afterwards. | Notes longer than 240 characters. |
 | `prepare_workspace` | Wipes `/workspace/explainer` and runs `hyperframes init` there. | Nothing, which is why the instructions say to call it once, before the narration exists. |
 | `generate_narration` | Calls ElevenLabs, writes the audio and word timings into the project. | A script over the word ceiling; audio that runs past the narration limit (the audio is discarded and the error says how many words to cut); a seventh narration for the same pull request; running before the project is scaffolded. |
 | `render_and_publish` | `hyperframes check`, render, `ffprobe`, poster frame, upload, signed URLs. | A failing check; a render that fails or produces no file; an unplayable file; a video over 60 seconds; a file over 200 MB. |
 | `post_explainer_comment` | Writes the final comment and a `meta.json` next to the video. | A video URL other than the one `render_and_publish` returned in this run. |
+
+The tool names are the same on GitLab; their descriptions and the instructions say "merge
+request" there. Two differences in what the model sees: GitLab reports no line counts, so
+additions and deletions are counted from the diffs, and GitLab commits carry an author name but no
+username.
 
 ## Length
 
@@ -100,8 +127,8 @@ the version its skills were written for, and the HyperFrames skills under
 `/workspace/.agents/skills` (Flue discovers them as workspace skills). The container is scratch
 space: every run re-scaffolds the project. It sleeps after 10 minutes idle.
 
-ElevenLabs and GitHub are called from the Worker, never from the container, so neither key enters
-the model's shell. The bucket is written only inside `render_and_publish`.
+ElevenLabs, GitHub and GitLab are called from the Worker, never from the container, so no key
+enters the model's shell. The bucket is written only inside `render_and_publish`.
 
 The first run after a deploy that changes the image waits for Cloudflare to place a container
 instance, which can take minutes; the agent allows up to five for placement and ten for the boot.
@@ -109,7 +136,9 @@ instance, which can take minutes; the agent allows up to five for placement and 
 ## Output and retention
 
 One mp4 per run (1920×1080, 30 fps, H.264 + AAC) and a poster frame, in the private
-`EXPLAINER_VIDEOS` bucket under `<owner>/<repo>/pr-<number>/<delivery id>/`. The Worker serves
+`EXPLAINER_VIDEOS` bucket under `<owner>/<repo>/pr-<number>/<delivery id>/` for GitHub and
+`gitlab/<project id>/mr-<iid>/note-<note id>/` for GitLab (the `pr-` and `mr-` segments keep the
+two apart, whatever the names). The Worker serves
 them itself at `/videos/<signature>/<key>`: the signature is an HMAC of the key with
 `VIDEO_URL_SECRET`, checked in constant time, and the only place it is ever written is the
 pull-request comment. So a video is reachable by exactly the people who can read that comment, the
@@ -124,7 +153,8 @@ Two things remove a video:
 - **The pull request closing or merging**: the App's `pull_request` webhook deletes that pull
   request's objects and rewrites each run's comment to "_The video was removed when the pull
   request closed._", keeping the summary and bullets. No model turn is involved: the comment id
-  and the summary are in a small `meta.json` the publish step writes next to the video.
+  and the summary are in a small `meta.json` the publish step writes next to the video. On GitLab
+  the group webhook's merge request event (`close` or `merge`) does the same for the notes.
 
 Rotating `VIDEO_URL_SECRET` invalidates every link posted so far.
 
@@ -137,6 +167,7 @@ instead.
 | Route | Auth | Purpose |
 |---|---|---|
 | `POST /channels/github/webhook` | GitHub webhook signature | the App's deliveries |
+| `POST /channels/gitlab/webhook` | `X-Gitlab-Token` secret | the GitLab group webhook's deliveries |
 | `GET\|HEAD /videos/<signature>/<key>` | the signature in the URL | serves a video or poster |
 | `/agents/pr-explainer/*` | bearer `OPERATOR_TOKEN` | run a render by hand, read a conversation ([local-development.md](local-development.md#run-a-render-by-hand)) |
 | `GET /healthz` | none | `ok` |

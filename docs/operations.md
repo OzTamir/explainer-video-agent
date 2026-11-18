@@ -24,6 +24,8 @@ lazily; everything in this repo does.
 npx wrangler deploy --dry-run                                  # config + bindings, no upload
 curl https://<your-worker>/healthz                             # 200 ok
 curl -X POST https://<your-worker>/channels/github/webhook     # 503 until the webhook secret exists, 4xx after
+curl -X POST https://<your-worker>/channels/gitlab/webhook     # 503 until GITLAB_WEBHOOK_SECRET exists, 401 after
+node scripts/check-gitlab.mjs                                  # offline checks of the GitLab parsing and client
 ```
 
 Then comment `/explain-vid` on a pull request in a test repository, or dispatch a run by hand
@@ -57,7 +59,9 @@ Workers Logs and Traces are enabled (`observability.traces` in `wrangler.jsonc`)
 response appears as one trace with agent-level spans in the Cloudflare dashboard. Conversation
 history (every tool call with its input and output, including the container's logs) is readable
 through the operator mount with `?view=history`. The GitHub App's Advanced tab shows every
-delivery and the Worker's response to it.
+delivery and the Worker's response to it. For GitLab, the group webhook's Recent events list
+(Group → Settings → Webhooks → Edit) shows the same, and the Worker's answer names the reason
+when it ignores a delivery.
 
 ## Troubleshooting
 
@@ -67,6 +71,17 @@ delivery and the Worker's response to it.
 commenter is an owner, member or collaborator (anyone else is ignored by design); the repository
 passes `GITHUB_ALLOWED_REPOS` if set; the comment is exactly `/explain-vid` or `/explain-vid
 <note>`.
+
+**Nothing happens after `/explain-vid` on GitLab.** Open the webhook's Recent events. No entry:
+the webhook is not on this group, or Comments is not ticked. `401`: the secret token differs from
+`GITLAB_WEBHOOK_SECRET`. `503`: that secret is not set. `500`: `GITLAB_TOKEN` is missing, expired
+or lacks the `api` scope, or `GITLAB_BASE_URL` points at the wrong instance. `200` with
+`ignored: ...`: the body says why (not a Developer, project not in `GITLAB_ALLOWED_PROJECTS`,
+not the command). After four failures in a row GitLab pauses the webhook; send a test event to
+re-enable it.
+
+**GitLab notes stop appearing after months of working.** The group access token expired (365 days
+at most by default). Create a new one and `npx wrangler secret put GITLAB_TOKEN`.
 
 **👀 appears but no progress comment.** The agent started but the first tool call failed, or the
 container is still being placed. Read the conversation history through the operator mount. A

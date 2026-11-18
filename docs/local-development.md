@@ -46,6 +46,11 @@ from `.dev.vars`, install it on a test repository, and comment `/explain-vid` on
 there. Quick tunnels change hostname on every start. Keep a separate App for development so the
 production App's webhook URL stays untouched.
 
+For GitLab, point a group (or test project) webhook at the tunnel host plus
+`/channels/gitlab/webhook` with `GITLAB_WEBHOOK_SECRET` from `.dev.vars` as its secret token. The
+parsing, token check and client can be exercised without any of this:
+`node scripts/check-gitlab.mjs` runs offline against fake payloads and a fake GitLab.
+
 ## Run a render by hand
 
 The operator mount (bearer `OPERATOR_TOKEN` from `.dev.vars`) dispatches a run without a webhook.
@@ -65,6 +70,9 @@ installation's URL ends with it). The response is `202` with a `submissionId`; t
 the background. `deliveryId` keys the run's progress comment and its objects; reuse one to keep
 editing the same comment, change it for a new run. `request` is the note that would follow the
 command.
+
+For a GitLab merge request the id is `gitlab:v1:<project id>:<iid>` and `initialData` is
+`{"provider":"gitlab","projectId":<project id>,"projectPath":"<group/project>","number":<iid>,"title":"…","openedBy":""}`.
 
 Read the run back:
 

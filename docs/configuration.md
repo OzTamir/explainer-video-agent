@@ -15,6 +15,10 @@ message while `/healthz` keeps answering.
 | `GITHUB_APP_PRIVATE_KEY` | yes | the App's private key (PEM as downloaded); mints installation tokens |
 | `GITHUB_WEBHOOK_SECRET` | yes | the App's webhook secret; verifies deliveries to `/channels/github/webhook`. The route answers 503 until it is set. |
 | `GITHUB_ALLOWED_REPOS` | no | optional comma-separated `owner/repo` allowlist on top of where the App is installed. Unset means every repository the App is installed on. |
+| `GITLAB_TOKEN` | yes | GitLab group access token (role Reporter, scope `api`), sent as `PRIVATE-TOKEN`. Reads merge requests, posts and edits the notes, checks the commenter's role. |
+| `GITLAB_WEBHOOK_SECRET` | yes | the group webhook's secret token; compared with `X-Gitlab-Token` on `/channels/gitlab/webhook`. The route answers 503 until it is set. |
+| `GITLAB_BASE_URL` | no | the GitLab instance origin (default `https://gitlab.com`); set it for self-managed |
+| `GITLAB_ALLOWED_PROJECTS` | no | optional comma-separated allowlist of full project paths (`group/project`) or group paths (`group` covers every project under it). Unset or empty means every project the webhook covers. |
 | `ELEVENLABS_API_KEY` | yes | text-to-speech |
 | `ELEVENLABS_VOICE_ID` | no | the voice (default: ElevenLabs' stock "Brian", `nPczCjzI2devNBz1zQrb`) |
 | `ELEVENLABS_MODEL_ID` | no | the model (default `eleven_multilingual_v2`; must support the timestamps endpoint) |
@@ -22,6 +26,8 @@ message while `/healthz` keeps answering.
 | `PUBLIC_BASE_URL` | no | this Worker's public origin, used in the links (`http://localhost:5173` locally) |
 | `OPERATOR_TOKEN` | yes | bearer token for the `/agents/*` mount; the mount answers 503 without it |
 | `SANDBOX_TRANSPORT` | no | `rpc`: one connection per container instead of one subrequest per call. Keep it. |
+
+The `GITHUB_*` and `GITLAB_*` groups are each optional: configure one provider or both.
 
 ## Bindings (`wrangler.jsonc`)
 
@@ -46,7 +52,8 @@ never edit or reorder a deployed entry (Cloudflare refuses the deploy).
 - **Video length**: at most 60 seconds, and shorter for small changes (the bands in
   [how-it-works.md](how-it-works.md#length)). Shorter films render faster and narrate cheaper.
 - **Who can trigger**: write access on the repository, by GitHub's `author_association`, plus the
-  optional `GITHUB_ALLOWED_REPOS` allowlist. There is no per-repository daily cap; see
+  optional `GITHUB_ALLOWED_REPOS` allowlist. On GitLab: the Developer role or higher on the
+  project, plus the optional `GITLAB_ALLOWED_PROJECTS` allowlist. There is no per-repository daily cap; see
   [security.md](security.md#known-gaps).
 
 ## Changing the behavior
@@ -74,7 +81,12 @@ adding a sentence here; prompts bend, code does not.
 
 **The comments** are rendered by `renderStatus()` (progress) and `renderExplainerComment()`
 (final). The final one is also what the channel rewrites when the pull request closes, so keep
-both forms in that function.
+both forms in that function. Both take the provider and say "merge request" on GitLab.
+
+**The provider** is not something the agent chooses. `src/integrations/change.ts` defines
+`ChangeRef` (a GitHub pull request with its installation, or a GitLab project id with a merge
+request iid) and the five-method `ChangeClient` both providers satisfy. The channel builds the
+reference from the verified webhook, and every tool is bound to it.
 
 The HyperFrames side (scene contract, spec reference, CLI) comes from the skills the container
 image ships; `Dockerfile` pins the CLI version and copies its skills into
