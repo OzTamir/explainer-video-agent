@@ -4,10 +4,15 @@ import { mount } from 'hono/mount';
 import { Hono } from 'hono';
 import { PrExplainer } from './agents/pr-explainer.ts';
 import { githubHandler } from './channels/github.ts';
+import { watchFailures } from './channels/failure-note.ts';
 import { gitlabWebhook } from './channels/gitlab.ts';
 import { VIDEO_ROUTE, serveObject } from './integrations/explainer-store.ts';
 
 const app = new Hono();
+
+// A run that dies before the agent can report it (no credits, a bad key) still
+// leaves a plain note on the merge request.
+watchFailures();
 
 // The route map: every channel and custom route is mounted here explicitly.
 

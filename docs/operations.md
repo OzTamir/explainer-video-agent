@@ -83,6 +83,10 @@ re-enable it.
 **GitLab notes stop appearing after months of working.** The group access token expired (365 days
 at most by default). Create a new one and `npx wrangler secret put GITLAB_TOKEN`.
 
+**GitLab: a note says "Could not make the video".** The run failed before the agent could report
+it, usually because the model provider refused the request. The note names the cause when it is a
+known one (no credits, a refused key, rate limiting); otherwise the full error is in `wrangler tail`.
+
 **👀 appears but no progress comment.** The agent started but the first tool call failed, or the
 container is still being placed. Read the conversation history through the operator mount. A
 "GitHub App installation token failed" error means `GITHUB_APP_ID` or `GITHUB_APP_PRIVATE_KEY` is
