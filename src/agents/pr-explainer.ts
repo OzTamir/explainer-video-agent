@@ -15,20 +15,30 @@ import { cloudflareSandbox } from '@flue/runtime/cloudflare';
 import * as v from 'valibot';
 import { ElevenLabsClient } from '../integrations/elevenlabs.ts';
 import {
-	RETENTION_DAYS,
+	type ChangeFile,
+	type ChangeRef,
+	type Provider,
+	type Wording,
+	changeClient,
+	changeNoun,
+	wording,
+} from '../integrations/change.ts';
+import {
+	retentionDays,
+	changePrefix,
 	objectUrl,
-	pullRequestPrefix,
 	putObject,
 	putRunMeta,
 } from '../integrations/explainer-store.ts';
-import { GitHubClient, type PullRequestFile, type PullRequestRef } from '../integrations/github.ts';
 
 // ---------------------------------------------------------------------------
-// One conversation per pull request, created by the GitHub channel when
-// someone with write access comments `/explain-vid`.
+// One conversation per pull request or merge request, created by the GitHub
+// or GitLab channel when someone with write access comments `/explain-vid`.
 // ---------------------------------------------------------------------------
 
-export const initialData = v.object({
+const githubData = v.object({
+	/** Absent on conversations created before GitLab support; those are GitHub. */
+	provider: v.optional(v.literal('github')),
 	owner: v.string(),
 	repo: v.string(),
 	number: v.number(),
@@ -37,10 +47,36 @@ export const initialData = v.object({
 	title: v.string(),
 	openedBy: v.string(),
 });
+
+const gitlabData = v.object({
+	provider: v.literal('gitlab'),
+	/** Numeric project id and full path, both from the verified webhook. */
+	projectId: v.pipe(v.number(), v.integer(), v.minValue(1)),
+	projectPath: v.string(),
+	/** The merge request iid. */
+	number: v.number(),
+	title: v.string(),
+	openedBy: v.string(),
+});
+
+export const initialData = v.union([gitlabData, githubData]);
 export type PrExplainerInitialData = v.InferOutput<typeof initialData>;
 
-/** The pull request plus the App installation to act through. */
-type Target = PullRequestRef & { installationId: number };
+/** The change this conversation is bound to, with the identity to act through. */
+type Target = ChangeRef;
+
+function targetOf(pr: PrExplainerInitialData): Target {
+	if (pr.provider === 'gitlab') {
+		return { provider: 'gitlab', projectId: pr.projectId, projectPath: pr.projectPath, number: pr.number };
+	}
+	return {
+		provider: 'github',
+		owner: pr.owner,
+		repo: pr.repo,
+		number: pr.number,
+		installationId: pr.installationId,
+	};
+}
 
 /** Worker bindings the agent uses; declared in wrangler.jsonc. */
 type Bindings = {
@@ -82,12 +118,7 @@ export function PrExplainer({ id }: AgentProps) {
 	});
 
 	const pr = useInitialData<PrExplainerInitialData>();
-	const ref: Target = {
-		owner: pr.owner,
-		repo: pr.repo,
-		number: pr.number,
-		installationId: pr.installationId,
-	};
+	const ref = targetOf(pr);
 	// A run is one webhook delivery of the command. The operator mount can also
 	// prompt directly; those runs share one id so they keep editing one comment.
 	const delivery = useDelivery();
@@ -97,7 +128,7 @@ export function PrExplainer({ id }: AgentProps) {
 		requestedBy: attributes.sender || 'operator',
 	};
 
-	// The render environment: one container per pull request, keyed by the
+	// The render environment: one container per change, keyed by the
 	// conversation id. Its filesystem is scratch space; every run re-scaffolds.
 	useSandbox(
 		cloudflareSandbox(
@@ -123,11 +154,11 @@ export function PrExplainer({ id }: AgentProps) {
 	useTool(pullRequestPatches(ref));
 	useTool(setStatusComment(ref, run, status, setStatus));
 	useTool(prepareWorkspace);
-	useTool(generateNarration(narrations, setNarrations));
+	useTool(generateNarration(ref, narrations, setNarrations));
 	useTool(renderAndPublish(ref, run, setPublished));
 	useTool(postExplainerComment(ref, run, status, setStatus, published));
 
-	return instructions(pr, run);
+	return instructions(pr, wording(ref), run);
 }
 
 PrExplainer.initialData = initialData;
@@ -136,16 +167,17 @@ PrExplainer.initialData = initialData;
 // Instructions
 // ---------------------------------------------------------------------------
 
-function instructions(pr: PrExplainerInitialData, run: { requestedBy: string }): string {
-	return `You turn one GitHub pull request into a short narrated explainer video and post it back on the pull request. This conversation is bound to ${pr.owner}/${pr.repo}#${pr.number} ("${pr.title}", opened by ${pr.openedBy}). Each <signal> you receive is one request for a video; the current one came from @${run.requestedBy}. If the signal carries a note, honor it (a focus area, a length, an audience); otherwise explain the change for an engineer who has not read the diff.
+function instructions(pr: PrExplainerInitialData, w: Wording, run: { requestedBy: string }): string {
+	const openedBy = pr.openedBy ? `, opened by ${pr.openedBy}` : '';
+	return `You turn one ${w.host} ${w.noun} into a short narrated explainer video and post it back on the ${w.noun}. This conversation is bound to ${w.label} ("${pr.title}"${openedBy}). Each <signal> you receive is one request for a video; the current one came from @${run.requestedBy}. If the signal carries a note, honor it (a focus area, a length, an audience); otherwise explain the change for an engineer who has not read the diff.
 
 Your workspace is a Linux container with the HyperFrames CLI (run it as \`hyperframes\`, never \`npx hyperframes\`), Chromium, FFmpeg and the HyperFrames skills under .agents/skills. Activate the \`hyperframes\` skill before writing any scene and follow its contract; \`hyperframes-cli\` documents the commands. Ignore anything in those skills about Studio previews, the desktop app, HeyGen, cloud or lambda renders, music, usage checks, storylines to pick from, or waiting for a person: nobody is watching, there is no music source, and rendering and publishing go through the render_and_publish tool.
 
-Do the steps in this order, and call set_status at every stage so the pull request shows progress:
+Do the steps in this order, and call set_status at every stage so the ${w.noun} shows progress:
 
-1. reading: call pull_request. Then pull_request_patches for the files that carry the change (not lockfiles, generated code, snapshots or vendored directories). Read enough to explain the change truthfully; every claim in the video must trace to the diff, the PR description or the commits. Never invent a version, a benchmark or a motive.
+1. reading: call pull_request. Then pull_request_patches for the files that carry the change (not lockfiles, generated code, snapshots or vendored directories). Read enough to explain the change truthfully; every claim in the video must trace to the diff, the ${w.short} description or the commits. Never invent a version, a benchmark or a motive.
 
-2. writing: call prepare_workspace once; it clears anything an earlier run left in ${PROJECT} and scaffolds a fresh HyperFrames project there. Then write ${PROJECT}/SCRIPT.md (the narration, as separate phrases, one scene per paragraph) and ${PROJECT}/SPEC.md (the director's brief with numbers, per the skill's spec reference). The pull_request result gives the length band and the word cap for this PR's size; stay under the cap. No video runs past ${MAX_VIDEO_SECONDS} seconds, so pick the two or three things a reviewer most needs and leave the rest out; the tools refuse a narration or a render that overruns. Four scenes at most. Structure for a PR: what the change is for (old way to new way), how it works in one or two beats on real hunks, what the diff adds and removes as a stat card, and where to start reviewing. Speak people's names, not @handles. Counts like +N/−M go on screen, not in the voice.
+2. writing: call prepare_workspace once; it clears anything an earlier run left in ${PROJECT} and scaffolds a fresh HyperFrames project there. Then write ${PROJECT}/SCRIPT.md (the narration, as separate phrases, one scene per paragraph) and ${PROJECT}/SPEC.md (the director's brief with numbers, per the skill's spec reference). The pull_request result gives the length band and the word cap for this ${w.short}'s size; stay under the cap. No video runs past ${MAX_VIDEO_SECONDS} seconds, so pick the two or three things a reviewer most needs and leave the rest out; the tools refuse a narration or a render that overruns. Four scenes at most. Structure for a ${w.short}: what the change is for (old way to new way), how it works in one or two beats on real hunks, what the diff adds and removes as a stat card, and where to start reviewing. Speak people's names, not @handles. Counts like +N/−M go on screen, not in the voice.
 
 3. narrating: call generate_narration once with the final script. It writes assets/audio/narration.mp3 and assets/audio/words.json (each spoken word with start and end seconds) into the project and returns the words. The voice is the clock: scene boundaries and every in-scene reveal are placed at word start times.
 
@@ -162,7 +194,7 @@ Do the steps in this order, and call set_status at every stage so the pull reque
 
 6. done: call post_explainer_comment with the returned video URL, a one-sentence summary and two to four bullets of what the video covers. That call replaces the status comment with the final one.
 
-If a step cannot be completed (missing credentials, a diff too large to read, a render that keeps failing), call set_status with stage "failed" and a one-line reason, then stop. Never post anything else to the pull request. Reply to the signal with a terse log of what you did; only the operator reads it.`;
+If a step cannot be completed (missing credentials, a diff too large to read, a render that keeps failing), call set_status with stage "failed" and a one-line reason, then stop. Never post anything else to the ${w.noun}. Reply to the signal with a terse log of what you did; only the operator reads it.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +217,7 @@ const SKIP_PATTERNS = [
 	/\.(png|jpe?g|gif|webp|svg|ico|mp4|mp3|wav|pdf|woff2?|ttf)$/i,
 ];
 
-function isNoise(file: PullRequestFile): boolean {
+function isNoise(file: ChangeFile): boolean {
 	return SKIP_PATTERNS.some((p) => p.test(file.filename));
 }
 
@@ -227,14 +259,13 @@ function lengthBand(
 function pullRequestFacts(ref: Target) {
 	return defineTool({
 		name: 'pull_request',
-		description:
-			'The pull request this conversation is about: title, description, author, branches, size, every changed file (with a noise flag for lockfiles, generated and binary files), the commits with their authors, and the length band and word cap the video must respect for a change this size. Call it first.',
+		description: `The ${changeNoun(ref.provider)} this conversation is about: title, description, author, branches, size, every changed file (with a noise flag for lockfiles, generated and binary files), the commits with their authors, and the length band and word cap the video must respect for a change this size. Call it first.`,
 		async run() {
-			const github = new GitHubClient(ref.installationId);
+			const client = changeClient(ref);
 			const [pr, files, commits] = await Promise.all([
-				github.getPullRequest(ref),
-				github.listPullRequestFiles(ref),
-				github.listPullRequestCommits(ref),
+				client.getChange(),
+				client.listFiles(),
+				client.listCommits(),
 			]);
 			const substantive = files.filter((f) => !isNoise(f));
 			const lines = substantive.reduce((n, f) => n + f.additions + f.deletions, 0);
@@ -276,14 +307,13 @@ function pullRequestFacts(ref: Target) {
 function pullRequestPatches(ref: Target) {
 	return defineTool({
 		name: 'pull_request_patches',
-		description:
-			'Unified-diff hunks for up to 12 named files from the pull request, each cut at maxCharsPerFile. Pick the files that carry the change; the result names any file that has no patch (binary or too large for GitHub to return).',
+		description: `Unified-diff hunks for up to 12 named files from the ${changeNoun(ref.provider)}, each cut at maxCharsPerFile. Pick the files that carry the change; the result names any file that has no patch (binary or too large for ${wording(ref).host} to return).`,
 		input: v.object({
 			files: v.pipe(v.array(v.pipe(v.string(), v.minLength(1))), v.minLength(1), v.maxLength(12)),
 			maxCharsPerFile: v.optional(v.pipe(v.number(), v.minValue(500), v.maxValue(20_000)), 6000),
 		}),
 		async run({ data }) {
-			const all = await new GitHubClient(ref.installationId).listPullRequestFiles(ref);
+			const all = await changeClient(ref).listFiles();
 			const wanted = new Set(data.files);
 			const found = all.filter((f) => wanted.has(f.filename));
 			const missing = data.files.filter((name) => !all.some((f) => f.filename === name));
@@ -323,8 +353,8 @@ const STAGE_LINES: Record<Stage, string> = {
 	failed: '❌ Could not finish',
 };
 
-function renderStatus(stage: Stage, note: string | undefined, requestedBy: string): string {
-	const lines = [`**Explainer video** · ${STAGE_LINES[stage]}`];
+function renderStatus(stage: Stage, note: string | undefined, requestedBy: string, provider: Provider): string {
+	const lines = [`**Explainer video** · ${STAGE_LINES[stage].replace('pull request', changeNoun(provider))}`];
 	if (note) lines.push('', note);
 	lines.push('', `<sub>Requested by @${requestedBy} with \`/explain-vid\`.</sub>`);
 	return lines.join('\n');
@@ -338,12 +368,12 @@ async function upsertRunComment(
 	setStatus: StatusSetter,
 	body: string,
 ): Promise<{ commentId: number; url: string }> {
-	const github = new GitHubClient(ref.installationId);
+	const client = changeClient(ref);
 	if (status && status.deliveryId === run.deliveryId) {
-		const updated = await github.updateIssueComment(ref, status.commentId, body);
+		const updated = await client.updateComment(status.commentId, body);
 		return { commentId: updated.id, url: updated.url };
 	}
-	const created = await github.createIssueComment(ref, body);
+	const created = await client.createComment(body);
 	setStatus({ deliveryId: run.deliveryId, commentId: created.id, requestedBy: run.requestedBy });
 	return { commentId: created.id, url: created.url };
 }
@@ -351,8 +381,7 @@ async function upsertRunComment(
 function setStatusComment(ref: Target, run: RunInfo, status: Status | null, setStatus: StatusSetter) {
 	return defineTool({
 		name: 'set_status',
-		description:
-			'Show progress on the pull request: one comment, created at the first call and edited afterwards. Call it when a stage starts, and with stage "failed" plus a one-line reason when you have to give up.',
+		description: `Show progress on the ${changeNoun(ref.provider)}: one comment, created at the first call and edited afterwards. Call it when a stage starts, and with stage "failed" plus a one-line reason when you have to give up.`,
 		input: v.object({
 			stage: v.picklist(STAGES),
 			note: v.optional(v.pipe(v.string(), v.maxLength(240))),
@@ -363,7 +392,7 @@ function setStatusComment(ref: Target, run: RunInfo, status: Status | null, setS
 				run,
 				status,
 				setStatus,
-				renderStatus(data.stage, data.note, run.requestedBy),
+				renderStatus(data.stage, data.note, run.requestedBy, ref.provider),
 			);
 			return { output: { ...result, stage: data.stage } };
 		},
@@ -408,7 +437,8 @@ const MAX_SCRIPT_CHARS = MAX_SCRIPT_WORDS * 7;
 /** Narrations per pull request, across runs; a cost guard, not a feature. */
 const MAX_NARRATIONS = 6;
 
-function generateNarration(narrations: number, setNarrations: (next: number) => void) {
+function generateNarration(ref: Target, narrations: number, setNarrations: (next: number) => void) {
+	const noun = changeNoun(ref.provider);
 	return defineTool({
 		name: 'generate_narration',
 		description:
@@ -427,8 +457,8 @@ function generateNarration(narrations: number, setNarrations: (next: number) => 
 				const hasAudio = await harness.sandbox.exists(`${PROJECT}/assets/audio/words.json`);
 				throw new Error(
 					hasAudio
-						? `This pull request has used its ${MAX_NARRATIONS} narrations. Build the video with the audio already in the project.`
-						: `This pull request has used its ${MAX_NARRATIONS} narrations and none produced usable audio. Call set_status with stage "failed" and stop.`,
+						? `This ${noun} has used its ${MAX_NARRATIONS} narrations. Build the video with the audio already in the project.`
+						: `This ${noun} has used its ${MAX_NARRATIONS} narrations and none produced usable audio. Call set_status with stage "failed" and stop.`,
 				);
 			}
 			if (!(await harness.sandbox.exists(`${PROJECT}/index.html`))) {
@@ -441,7 +471,7 @@ function generateNarration(narrations: number, setNarrations: (next: number) => 
 			if (narration.durationSeconds > MAX_NARRATION_SECONDS) {
 				const over = narration.durationSeconds - MAX_NARRATION_SECONDS;
 				throw new Error(
-					`The narration runs ${narration.durationSeconds.toFixed(1)} s; it must end by ${MAX_NARRATION_SECONDS} s so the video stays under ${MAX_VIDEO_SECONDS} s. Cut at least ${Math.ceil(over * WORDS_PER_SECOND) + 10} words and narrate again (nothing was written; ${MAX_NARRATIONS - narrations - 1} narrations left for this pull request).`,
+					`The narration runs ${narration.durationSeconds.toFixed(1)} s; it must end by ${MAX_NARRATION_SECONDS} s so the video stays under ${MAX_VIDEO_SECONDS} s. Cut at least ${Math.ceil(over * WORDS_PER_SECOND) + 10} words and narrate again (nothing was written; ${MAX_NARRATIONS - narrations - 1} narrations left for this ${noun}).`,
 				);
 			}
 			const audioPath = `${PROJECT}/assets/audio/narration.mp3`;
@@ -480,9 +510,9 @@ function tail(text: string, chars = 2500): string {
 	return text.length > chars ? `…${text.slice(-chars)}` : text;
 }
 
-/** Objects of one run: `<owner>/<repo>/pr-<n>/<delivery id>/…`. */
+/** Objects of one run: `<change prefix><delivery id>/…` (see changePrefix). */
 function runPrefix(ref: Target, run: RunInfo): string {
-	return `${pullRequestPrefix(ref)}${run.deliveryId.replace(/[^A-Za-z0-9_-]/g, '')}/`;
+	return `${changePrefix(ref)}${run.deliveryId.replace(/[^A-Za-z0-9_-]/g, '')}/`;
 }
 
 function renderAndPublish(ref: Target, run: RunInfo, setPublished: (next: Published | null) => void) {
@@ -587,13 +617,18 @@ function fmtDuration(seconds: number): string {
  * channel renders that form when the pull request closes).
  */
 export function renderExplainerComment(input: {
+	/** Picks the wording; GitHub when absent. */
+	provider?: Provider;
 	number: number;
 	requestedBy: string;
 	summary: string;
 	covers: string[];
 	video: { videoUrl: string; posterUrl: string; durationSeconds: number } | null;
 }): string {
-	const lines = [`## 🎬 Explainer video for #${input.number}`, ''];
+	const noun = changeNoun(input.provider ?? 'github');
+	// GitLab links merge requests as !12, GitHub links pull requests as #12.
+	const mark = input.provider === 'gitlab' ? '!' : '#';
+	const lines = [`## 🎬 Explainer video for ${mark}${input.number}`, ''];
 	if (input.video) {
 		if (input.video.posterUrl) {
 			lines.push(`[![Explainer video poster](${input.video.posterUrl})](${input.video.videoUrl})`, '');
@@ -603,7 +638,7 @@ export function renderExplainerComment(input: {
 			'',
 		);
 	} else {
-		lines.push('_The video was removed when the pull request closed._', '');
+		lines.push(`_The video was removed when the ${noun} closed._`, '');
 	}
 	lines.push(
 		input.summary,
@@ -611,7 +646,7 @@ export function renderExplainerComment(input: {
 		'**What it covers**',
 		...input.covers.map((c) => `- ${c}`),
 		'',
-		`<sub>Requested by @${input.requestedBy} with \`/explain-vid\`. Narrated with ElevenLabs, rendered with HyperFrames from the diff; an overview, not a review. The video is available for ${RETENTION_DAYS} days or until the pull request closes.</sub>`,
+		`<sub>Requested by @${input.requestedBy} with \`/explain-vid\`. Narrated with ElevenLabs, rendered with HyperFrames from the diff; an overview, not a review. The video is available for ${retentionDays()} days or until the ${noun} closes.</sub>`,
 	);
 	return lines.join('\n');
 }
@@ -625,8 +660,7 @@ function postExplainerComment(
 ) {
 	return defineTool({
 		name: 'post_explainer_comment',
-		description:
-			'Post the finished explainer on the pull request: poster, play link, duration, a one-sentence summary and 2–4 bullets of what the video covers. Replaces the progress comment. The videoUrl must be the one render_and_publish returned in this run.',
+		description: `Post the finished explainer on the ${changeNoun(ref.provider)}: poster, play link, duration, a one-sentence summary and 2–4 bullets of what the video covers. Replaces the progress comment. The videoUrl must be the one render_and_publish returned in this run.`,
 		input: v.object({
 			videoUrl: v.pipe(v.string(), v.url()),
 			summary: v.pipe(v.string(), v.minLength(20), v.maxLength(300)),
@@ -643,6 +677,7 @@ function postExplainerComment(
 				);
 			}
 			const body = renderExplainerComment({
+				provider: ref.provider,
 				number: ref.number,
 				requestedBy: run.requestedBy,
 				summary: data.summary,

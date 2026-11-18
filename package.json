@@ -12,7 +12,8 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"deploy": "vite build && wrangler deploy",
-		"check:types": "tsc --noEmit"
+		"check:types": "tsc --noEmit",
+		"check:gitlab": "node scripts/check-gitlab.mjs"
 	},
 	"dependencies": {
 		"@cloudflare/sandbox": "^0.12.14",

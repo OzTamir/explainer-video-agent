@@ -3,6 +3,10 @@
 From an empty Cloudflare account to the first `/explain-vid`. Every step is run once; afterwards a
 deploy is `npm run deploy` (or a push to `main` with Workers Builds, at the end of this page).
 
+This page sets up GitHub. For GitLab merge requests, do steps 1, 3, 4 and 5 here (leave out the
+`GITHUB_*` values if you do not use GitHub) and follow [gitlab.md](gitlab.md) in place of step 2.
+Both providers can run on the same Worker.
+
 ## Prerequisites
 
 | Need | Why |
@@ -11,7 +15,8 @@ deploy is `npm run deploy` (or a push to `main` with Workers Builds, at the end 
 | `wrangler` logged in (`npx wrangler login`, check with `npx wrangler whoami`) | creating the bucket, setting secrets, deploying |
 | Anthropic API key | the model (`anthropic/claude-opus-5` for the build, Haiku for compaction) |
 | ElevenLabs API key with text-to-speech access | the narration |
-| A GitHub account or organization that can create a GitHub App | the trigger and the comments |
+| A GitHub account or organization that can create a GitHub App | the trigger and the comments (GitHub) |
+| The Owner role on a GitLab group | the group access token and group webhook (GitLab, see [gitlab.md](gitlab.md)) |
 | Node 22.19 or newer | Flue's requirement |
 | Docker (local development only) | `npm run dev` builds the render container on your machine |
 
@@ -31,7 +36,7 @@ npx wrangler r2 bucket lifecycle add explainer-videos expire-after-7-days --expi
 ```
 
 The bucket name is bound in `wrangler.jsonc` → `r2_buckets[].bucket_name`; change both if you
-pick another name. `RETENTION_DAYS` in `src/integrations/explainer-store.ts` is what the comment
+pick another name. `VIDEO_RETENTION_DAYS` in `wrangler.jsonc` (default 7) is what the comment
 says; keep it equal to the lifecycle rule.
 
 ## 2. The GitHub App
@@ -85,6 +90,10 @@ openssl rand -hex 32 | npx wrangler secret put VIDEO_URL_SECRET   # rotating it 
 `OPERATOR_TOKEN` is any long random string; it gates the `/agents/*` mount used to run a render by
 hand and read conversation history. The mount answers 503 without it, so you can leave it unset in
 production if you never need the mount.
+
+For GitLab, also set `GITLAB_TOKEN` and `GITLAB_WEBHOOK_SECRET` ([gitlab.md](gitlab.md)); the
+`GITHUB_*` secrets can then be left out. A provider without its webhook secret answers 503 on its
+route and nothing else is affected.
 
 Non-secret configuration is `wrangler.jsonc` → `vars`: fill in `GITHUB_APP_ID`. `PUBLIC_BASE_URL`
 is the Worker's public origin, which you learn from the first deploy; see the next step.

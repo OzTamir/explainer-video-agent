@@ -17,6 +17,20 @@ GITHUB_WEBHOOK_SECRET=""
 # Optional: comma-separated "owner/repo" allowlist. Unset = every repo the App is installed on.
 GITHUB_ALLOWED_REPOS=""
 
+# --- GitLab (optional; leave empty to run GitHub only) --------------------------
+# See docs/gitlab.md. GitHub and GitLab are independent: configure either or both.
+
+# Group access token: group → Settings → Access tokens. Role Reporter, scope api.
+GITLAB_TOKEN=""
+# The secret token typed into the group webhook (group → Settings → Webhooks → Secret token).
+# Any long random string: `openssl rand -hex 24`.
+GITLAB_WEBHOOK_SECRET=""
+# The GitLab instance (non-secret; production value in wrangler.jsonc). Change it for self-managed.
+GITLAB_BASE_URL="https://gitlab.com"
+# Optional: comma-separated allowlist of full project paths ("group/project") or group
+# paths ("group" covers everything under it). Unset = every project the webhook covers.
+GITLAB_ALLOWED_PROJECTS=""
+
 # --- ElevenLabs ---------------------------------------------------------------
 # elevenlabs.io → Developers → API keys. Needs text-to-speech only.
 ELEVENLABS_API_KEY=""
@@ -28,6 +42,9 @@ ELEVENLABS_MODEL_ID="eleven_multilingual_v2"
 # Signs the video links the agent posts (any long random string: `openssl rand -hex 32`).
 # A link is valid only with its signature; rotating this value invalidates every posted link.
 VIDEO_URL_SECRET=""
+# How many days a video is kept (non-secret; production value in wrangler.jsonc). Default 7.
+# Keep it equal to the bucket's lifecycle rule (docs/setup.md).
+VIDEO_RETENTION_DAYS="7"
 # This Worker's public origin, used in those links (non-secret; production value in wrangler.jsonc).
 PUBLIC_BASE_URL="http://localhost:5173"
 

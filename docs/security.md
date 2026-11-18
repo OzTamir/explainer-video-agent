@@ -7,13 +7,13 @@ code, not to reassure.
 
 | Data | Source | Where it goes |
 |---|---|---|
-| Pull request title, description, diff, commit authors, the triggering comment | GitHub (read) | model context; the render container's filesystem; paraphrased into a narration script and a video; conversation history |
+| Pull request or merge request title, description, diff, commit authors, the triggering comment | GitHub or GitLab (read) | model context; the render container's filesystem; paraphrased into a narration script and a video; conversation history |
 | The narration script | the model | ElevenLabs (text-to-speech); the audio and word timings land in the container |
-| The rendered video and poster | the container | a private R2 bucket, served by the Worker under signed links that exist only in the pull-request comment |
+| The rendered video and poster | the container | a private R2 bucket, served by the Worker under signed links that exist only in the pull-request or merge-request comment |
 
 Every model call sends the relevant slice of this to Anthropic's API under your account. The
-Worker's only outbound destinations are GitHub, ElevenLabs, R2, the render container and
-Anthropic. The container itself has outbound internet (Cloudflare's default), which the model's
+Worker's only outbound destinations are GitHub, GitLab (the instance in `GITLAB_BASE_URL`),
+ElevenLabs, R2, the render container and Anthropic. The container itself has outbound internet (Cloudflare's default), which the model's
 shell can use; see below.
 
 ## Boundaries that hold by construction
@@ -27,6 +27,20 @@ shell can use; see below.
   A `pull_request` `closed` delivery deletes that pull request's videos and rewrites its explainer
   comments. Everything else is a no-op `200`. The route answers 503 while the webhook secret is
   unset, so a misconfiguration fails closed.
+- `/channels/gitlab/webhook` (POST only): the handler compares the `X-Gitlab-Token` header with
+  `GITLAB_WEBHOOK_SECRET` before it reads the body. Both values are hashed with SHA-256 and the
+  digests compared without an early exit, so timing does not depend on the header. A wrong or
+  missing header gets `401`; an unset secret gets `503`, so a misconfiguration fails closed. This
+  is a shared secret sent in every delivery, not a signature: it proves the sender knows the
+  secret and nothing about the body, and a captured delivery can be replayed (see Known gaps).
+  After that check the handler admits only a new, non-system note on a merge request that starts
+  with `/explain-vid`, for a project covered by `GITLAB_ALLOWED_PROJECTS` when set, whose author
+  is not the token's own bot user and has the Developer role or higher on that project (asked
+  from GitLab with the service token, inherited and invited memberships included; a blocked
+  member counts as none). The project id and merge request iid are taken from that payload and
+  never from the model. A merge request event with the action `close` or `merge` deletes that
+  merge request's videos and rewrites its explainer notes. Everything else is a `200` with a
+  one-line reason, sent only to callers that passed the secret check.
 - `/videos/<signature>/<key>`: unauthenticated by design; the signature (HMAC-SHA256 of the key
   under `VIDEO_URL_SECRET`, compared in constant time) is the capability. A valid link is written
   only into a pull-request comment, so possession tracks the ability to read that comment. There
@@ -50,26 +64,40 @@ cannot do from there:
 - post to GitHub anywhere but that pull request: only `set_status` and `post_explainer_comment`,
   both bound to it, and the final comment must link the file this run rendered;
 - act as any other installation: the installation id is recorded at conversation creation from
-  the signed webhook payload, and every GitHub call uses it.
+  the signed webhook payload, and every GitHub call uses it;
+- on GitLab, reach any other project or merge request: the project id and iid are recorded at
+  conversation creation from the verified webhook payload, and `GitLabClient` is constructed
+  bound to them. The token itself is wider than that binding; see Credentials.
 
 The narration tool caps script length and the number of narrations per pull request.
 
 **Credentials.** Read from the Worker environment (`.dev.vars` locally, Cloudflare secrets in
 production). Never in code, logs, tool outputs or dispatched messages. `.dev.vars` is gitignored.
 
+The two providers differ in how much a leaked credential is worth. GitHub calls use one-hour
+installation tokens limited to Pull requests: read and Issues: write. `GITLAB_TOKEN` is one
+long-lived group access token (up to a year) with the `api` scope, because GitLab has no narrower
+scope that can post a note. With the Reporter role it can read every project in the group
+(code, issues, merge requests) and comment anywhere in it, and it cannot push code or change
+settings. Only the code in `src/integrations/gitlab.ts` limits what the Worker does with it.
+Do not give the token a higher role than Reporter.
+
 **Delivery integrity.** GitHub deliveries dispatch with `idempotencyKey: deliveryId`, which GitHub
-keeps on manual redelivery, so a redelivered webhook cannot run a second render.
+keeps on manual redelivery, so a redelivered webhook cannot run a second render. GitLab
+deliveries dispatch with `idempotencyKey: note-<note id>`, so one comment starts one render however
+often it is retried, redelivered or replayed.
 
 ## Boundaries that depend on the model's judgment
 
 These are instructions, not enforcement. Treat them as best-effort.
 
-- **Prompt injection via content.** The untrusted content is the pull request itself: description,
+- **Prompt injection via content.** The untrusted content is the pull request (or merge request) itself: description,
   diff, commit messages, the trigger comment's note. The model reads all of it and has a shell. A
   hostile diff can make the video say wrong things, waste a render, or make the shell fetch
   something from the internet. It cannot reach a credential, post anywhere but that pull
   request's comment, or publish a file that did not pass the render gate. Trigger access is
-  limited to people with write access on purpose; keep it that way for public repositories.
+  limited to people with write access (GitHub) or the Developer role (GitLab) on purpose; keep it
+  that way for public repositories and projects.
 - **Truthfulness.** "Every claim must trace to the diff" is a prompt rule. The video is an
   overview, not a review, and the comment says so.
 
@@ -95,13 +123,20 @@ These are instructions, not enforcement. Treat them as best-effort.
 ## Operational rules
 
 - Rotate any key immediately if exposed: `npx wrangler secret put <NAME>`; secrets apply live.
-- `OPERATOR_TOKEN` grants the ability to trigger renders on any pull request the App can reach
-  and to read every conversation's history. Treat it like a production credential; leave it unset
+- `OPERATOR_TOKEN` grants the ability to trigger renders on any pull request the App can reach,
+  on any merge request `GITLAB_TOKEN` can reach, and to read every conversation's history. Treat it like a production credential; leave it unset
   if you never use the mount.
 - `VIDEO_URL_SECRET` signs every video link. Rotating it is the kill switch for all posted links
   at once; the objects then expire on their own.
 - Installing the App on a public repository means any collaborator with write access can spend
   your ElevenLabs and Anthropic budget with one comment. Use `GITHUB_ALLOWED_REPOS`.
+- A GitLab group webhook covers every project in the group and its subgroups, so every Developer
+  in the group can spend that budget. Use `GITLAB_ALLOWED_PROJECTS` to narrow it.
+- `GITLAB_TOKEN` expires (365 days at most by default). Rotate it before then with
+  `npx wrangler secret put GITLAB_TOKEN`, and revoke the old one in the group's Access tokens page.
+- `GITLAB_WEBHOOK_SECRET` is stored in GitLab's webhook settings, where group Owners can replace
+  it. Anyone who learns it can forge a delivery that names any project and author, which starts
+  renders on merge requests the token can reach. Rotate it in both places if exposed.
 
 ## Known gaps
 
@@ -115,3 +150,11 @@ These are instructions, not enforcement. Treat them as best-effort.
    after it closes.
 5. The `/agents/*` mount could be removed from production builds entirely and kept behind a
    build flag for development.
+6. The GitLab webhook is verified with the plain secret token only. GitLab's newer signing token
+   (an HMAC over the delivery id, a timestamp and the body, in the `webhook-signature` header)
+   would add body integrity and replay protection; it is not implemented. Until then a replayed
+   delivery can at most repeat a cleanup or hit the idempotency key.
+7. The GitLab role check runs once, when the command arrives. Someone who loses the Developer
+   role while a render is running still gets the video.
+8. `GITLAB_TOKEN` cannot be scoped below `api`; GitLab's fine-grained permissions cover
+   personal access tokens only today.

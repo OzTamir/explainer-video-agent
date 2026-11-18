@@ -2,11 +2,11 @@ import { createGitHubChannel } from '@flue/github';
 import { dispatch } from '@flue/runtime';
 import { PrExplainer, type PrExplainerInitialData, renderExplainerComment } from '../agents/pr-explainer.ts';
 import { optionalEnv, requireEnv } from '../integrations/env.ts';
-import { deletePrefix, listRuns, pullRequestPrefix } from '../integrations/explainer-store.ts';
+import { changePrefix, deletePrefix, listRuns } from '../integrations/explainer-store.ts';
 import { GitHubClient, type PullRequestRef } from '../integrations/github.ts';
+import { EXPLAIN_COMMAND, isExplainCommand } from './command.ts';
 
-/** The slash command, as the first token of a pull-request comment. */
-export const EXPLAIN_COMMAND = '/explain-vid';
+export { EXPLAIN_COMMAND };
 
 /**
  * Comment authors allowed to trigger a render. GitHub's `author_association`
@@ -120,18 +120,13 @@ function buildChannel(): GitHubChannel {
 	return channel;
 }
 
-/** `/explain-vid` alone, or followed by whitespace and a note. `/explain-video` is not it. */
-function isExplainCommand(body: string): boolean {
-	return body === EXPLAIN_COMMAND || /^\/explain-vid\s/.test(body);
-}
-
 /**
  * A closed pull request keeps its explainer comments but loses the videos:
  * every run's objects are deleted and its comment is rewritten to say so.
  * No model turn is involved; the comment's text comes from the run's meta record.
  */
 async function removePullRequestVideos(ref: PullRequestRef, installationId: number): Promise<void> {
-	const prefix = pullRequestPrefix(ref);
+	const prefix = changePrefix({ provider: 'github', ...ref, installationId });
 	const runs = await listRuns(prefix);
 	const github = new GitHubClient(installationId);
 	for (const { meta } of runs) {
