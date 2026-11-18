@@ -42,6 +42,9 @@ ELEVENLABS_MODEL_ID="eleven_multilingual_v2"
 # Signs the video links the agent posts (any long random string: `openssl rand -hex 32`).
 # A link is valid only with its signature; rotating this value invalidates every posted link.
 VIDEO_URL_SECRET=""
+# How many days a video is kept (non-secret; production value in wrangler.jsonc). Default 7.
+# Keep it equal to the bucket's lifecycle rule (docs/setup.md).
+VIDEO_RETENTION_DAYS="7"
 # This Worker's public origin, used in those links (non-secret; production value in wrangler.jsonc).
 PUBLIC_BASE_URL="http://localhost:5173"
 

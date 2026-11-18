@@ -148,7 +148,7 @@ can seek.
 
 Two things remove a video:
 
-- **A week** (`RETENTION_DAYS`): a lifecycle rule on the bucket expires every object after 7 days.
+- **A week by default** (`VIDEO_RETENTION_DAYS`): a lifecycle rule on the bucket expires every object after that many days.
   The comment says so; afterwards the link answers "no longer available".
 - **The pull request closing or merging**: the App's `pull_request` webhook deletes that pull
   request's objects and rewrites each run's comment to "_The video was removed when the pull

@@ -13,11 +13,17 @@
 import type { Context } from 'hono';
 import { env } from 'cloudflare:workers';
 import type { ChangeRef } from './change.ts';
-import { requireEnv } from './env.ts';
+import { optionalEnv, requireEnv } from './env.ts';
 
 export const VIDEO_ROUTE = '/videos';
-/** What the comment promises; matches the bucket's lifecycle rule (docs/setup.md). */
-export const RETENTION_DAYS = 7;
+/**
+ * What the comment promises. Keep it equal to the bucket's lifecycle rule (docs/setup.md).
+ * `VIDEO_RETENTION_DAYS` overrides the default of 7.
+ */
+export function retentionDays(): number {
+	const days = Number(optionalEnv('VIDEO_RETENTION_DAYS'));
+	return Number.isInteger(days) && days >= 1 && days <= 365 ? days : 7;
+}
 
 type Bindings = { EXPLAINER_VIDEOS: R2Bucket };
 const bucket = () => (env as unknown as Bindings).EXPLAINER_VIDEOS;
@@ -135,7 +141,7 @@ export async function serveObject(c: Context): Promise<Response> {
 
 	const gone = () =>
 		c.text(
-			`This explainer video is no longer available (videos are kept ${RETENTION_DAYS} days or until the pull or merge request closes).`,
+			`This explainer video is no longer available (videos are kept ${retentionDays()} days or until the pull or merge request closes).`,
 			404,
 		);
 

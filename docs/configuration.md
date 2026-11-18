@@ -23,6 +23,7 @@ message while `/healthz` keeps answering.
 | `ELEVENLABS_VOICE_ID` | no | the voice (default: ElevenLabs' stock "Brian", `nPczCjzI2devNBz1zQrb`) |
 | `ELEVENLABS_MODEL_ID` | no | the model (default `eleven_multilingual_v2`; must support the timestamps endpoint) |
 | `VIDEO_URL_SECRET` | yes | signs the video links (`openssl rand -hex 32`). Rotating it invalidates every link posted so far. |
+| `VIDEO_RETENTION_DAYS` | no | how many days a video is kept, 1 to 365 (default 7). Keep it equal to the bucket lifecycle rule |
 | `PUBLIC_BASE_URL` | no | this Worker's public origin, used in the links (`http://localhost:5173` locally) |
 | `OPERATOR_TOKEN` | yes | bearer token for the `/agents/*` mount; the mount answers 503 without it |
 | `SANDBOX_TRANSPORT` | no | `rpc`: one connection per container instead of one subrequest per call. Keep it. |

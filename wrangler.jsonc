@@ -23,6 +23,8 @@
 		// Optional allowlist of project or group paths, comma-separated. Empty means
 		// every project the group webhook covers.
 		"GITLAB_ALLOWED_PROJECTS": "",
+		// How many days a video is kept. Must equal the bucket's lifecycle rule (docs/setup.md).
+		"VIDEO_RETENTION_DAYS": "7",
 		// This Worker's public origin, used to build the signed video links.
 		// Example: "https://explainer-video-agent.<your-subdomain>.workers.dev"
 		"PUBLIC_BASE_URL": "",

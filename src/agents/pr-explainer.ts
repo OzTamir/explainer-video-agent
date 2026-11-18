@@ -24,7 +24,7 @@ import {
 	wording,
 } from '../integrations/change.ts';
 import {
-	RETENTION_DAYS,
+	retentionDays,
 	changePrefix,
 	objectUrl,
 	putObject,
@@ -646,7 +646,7 @@ export function renderExplainerComment(input: {
 		'**What it covers**',
 		...input.covers.map((c) => `- ${c}`),
 		'',
-		`<sub>Requested by @${input.requestedBy} with \`/explain-vid\`. Narrated with ElevenLabs, rendered with HyperFrames from the diff; an overview, not a review. The video is available for ${RETENTION_DAYS} days or until the ${noun} closes.</sub>`,
+		`<sub>Requested by @${input.requestedBy} with \`/explain-vid\`. Narrated with ElevenLabs, rendered with HyperFrames from the diff; an overview, not a review. The video is available for ${retentionDays()} days or until the ${noun} closes.</sub>`,
 	);
 	return lines.join('\n');
 }

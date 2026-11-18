@@ -36,7 +36,7 @@ npx wrangler r2 bucket lifecycle add explainer-videos expire-after-7-days --expi
 ```
 
 The bucket name is bound in `wrangler.jsonc` → `r2_buckets[].bucket_name`; change both if you
-pick another name. `RETENTION_DAYS` in `src/integrations/explainer-store.ts` is what the comment
+pick another name. `VIDEO_RETENTION_DAYS` in `wrangler.jsonc` (default 7) is what the comment
 says; keep it equal to the lifecycle rule.
 
 ## 2. The GitHub App
